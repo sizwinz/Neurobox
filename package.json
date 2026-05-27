@@ -1,0 +1,20 @@
+{
+  "name": "neurobox-discord-rpc",
+  "version": "0.0.1",
+  "private": false,
+  "license": "AGPLv3",
+  "description": "Cross-browser extension that shows the current YouTube video / SoundCloud song in Discord Rich Presence.",
+  "type": "commonjs",
+  "scripts": {
+    "build": "node scripts/package-extension.js all",
+    "build-chromium": "node scripts/package-extension.js chromium",
+    "build-firefox": "node scripts/build-firefox.js",
+    "check": "node scripts/check.js",
+    "zip": "node scripts/package-extension.js all",
+    "zip:chromium": "node scripts/package-extension.js chromium",
+    "zip:firefox": "node scripts/package-extension.js firefox"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

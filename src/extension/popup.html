@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Neurobox RPC</title>
+    <link rel="stylesheet" href="popup.css">
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>Neurobox RPC</h1>
+        <label class="switch">
+          <input id="enabled" type="checkbox">
+          <span></span>
+        </label>
+      </header>
+      <section>
+        <div class="status">
+          <span id="dot" class="dot"></span>
+          <span id="statusText">Checking...</span>
+        </div>
+        <h2 id="title">No media detected</h2>
+        <p id="author"></p>
+        <p id="time"></p>
+        <p id="pageStatus"></p>
+        <p id="error"></p>
+        <form id="callbackForm" class="callback">
+          <input id="callbackUrl" type="url" placeholder="Paste Discord callback URL">
+          <button id="callbackSubmit" type="submit">Finish</button>
+        </form>
+        <div class="siteControls" aria-label="Site presence controls">
+          <label class="check">
+            <input id="youtubeEnabled" type="checkbox">
+            <span>YouTube</span>
+          </label>
+          <label class="check">
+            <input id="soundcloudEnabled" type="checkbox">
+            <span>SoundCloud</span>
+          </label>
+        </div>
+        <div class="actions">
+          <button id="login" type="button">Connect Discord</button>
+          <button id="logout" type="button">Disconnect</button>
+        </div>
+        <button id="clearPresence" class="secondary full" type="button">Clear Presence</button>
+      </section>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>
