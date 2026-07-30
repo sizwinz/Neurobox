@@ -383,9 +383,22 @@ function isSourceEnabled(source) {
 }
 
 function chooseActiveMedia() {
+  const now = Date.now();
+  const STALE_TIMEOUT_MS = 15000;
+
   return Object.values(mediaBySource)
-    .filter((media) => state.enabled && isSourceEnabled(media.source) && !media.ended && !isSuppressed(media))
+    .filter((media) => {
+      if (!state.enabled || !isSourceEnabled(media.source) || media.ended || isSuppressed(media)) {
+        return false;
+      }
+      const age = now - (media.updatedAt || 0);
+      if (age > STALE_TIMEOUT_MS) return false;
+      return true;
+    })
     .sort((a, b) => {
+      const aPlaying = !a.paused;
+      const bPlaying = !b.paused;
+      if (aPlaying !== bPlaying) return bPlaying ? 1 : -1;
       const aStarted = a.lastStartedAt || 0;
       const bStarted = b.lastStartedAt || 0;
       if (aStarted !== bStarted) return bStarted - aStarted;
@@ -619,17 +632,17 @@ function handleVideoUpdate(video) {
   });
 }
 
-browserApi.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+browserApi.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || !message.type) return false;
 
   if (message.type === "youtube-video") {
-    handleVideoUpdate({ platform: "YouTube", source: "youtube", action: "Watch", mediaId: message.video.videoId, ...message.video });
+    handleVideoUpdate({ platform: "YouTube", source: "youtube", action: "Watch", mediaId: message.video.videoId, tabId: sender.tab?.id, ...message.video });
     sendResponse({ ok: true });
     return true;
   }
 
   if (message.type === "media-update") {
-    handleVideoUpdate(message.media);
+    handleVideoUpdate({ tabId: sender.tab?.id, ...message.media });
     sendResponse({ ok: true });
     return true;
   }
@@ -653,11 +666,7 @@ browserApi.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     suppressCurrentMedia(source);
     if (source) {
       const next = { ...mediaBySource };
-      if (next[source]) {
-        next[source] = { ...next[source], ended: true, paused: true, updatedAt: Date.now() };
-      } else {
-        delete next[source];
-      }
+      delete next[source];
       mediaBySource = next;
     } else {
       mediaBySource = {};
@@ -862,4 +871,40 @@ browserApi.storage.local.get(["rpcState", "discordTokens", "rpcSession", "rpcWhi
   state = { ...state, authenticated: Boolean(tokens?.accessToken), connected: Boolean(tokens?.accessToken) };
   saveState();
 });
+
+if (browserApi.tabs && browserApi.tabs.onRemoved) {
+  browserApi.tabs.onRemoved.addListener((tabId) => {
+    let changed = false;
+    const nextMedia = { ...mediaBySource };
+    for (const [src, media] of Object.entries(nextMedia)) {
+      if (media.tabId === tabId) {
+        delete nextMedia[src];
+        changed = true;
+      }
+    }
+    if (changed) {
+      mediaBySource = nextMedia;
+      syncActivePresence(true).catch(() => {});
+    }
+  });
+}
+
+if (browserApi.tabs && browserApi.tabs.onUpdated) {
+  browserApi.tabs.onUpdated.addListener((tabId, changeInfo) => {
+    if (changeInfo.status === "loading" || changeInfo.url) {
+      let changed = false;
+      const nextMedia = { ...mediaBySource };
+      for (const [src, media] of Object.entries(nextMedia)) {
+        if (media.tabId === tabId && changeInfo.url) {
+          delete nextMedia[src];
+          changed = true;
+        }
+      }
+      if (changed) {
+        mediaBySource = nextMedia;
+        syncActivePresence(true).catch(() => {});
+      }
+    }
+  });
+}
 
