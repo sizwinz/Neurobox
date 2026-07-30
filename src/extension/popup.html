@@ -38,8 +38,39 @@
             <input id="soundcloudEnabled" type="checkbox">
             <span>SoundCloud</span>
           </label>
+          <label class="check">
+            <input id="showUrlEnabled" type="checkbox">
+            <span>Show URL</span>
+          </label>
+          <label class="check">
+            <input id="showYoutubeChannelEnabled" type="checkbox">
+            <span>YT Channel</span>
+          </label>
         </div>
-        <div class="actions">
+        <div id="domainSection" style="margin-top: 10px; padding: 10px; border-top: 1px solid rgba(255,255,255,0.1);">
+          <button id="toggleWhitelist" type="button" class="secondary full">Enable RPC on Current Site</button>
+          <p id="domainStatus" style="font-size: 12px; margin-top: 5px; opacity: 0.8; text-align: center;"></p>
+        </div>
+        <div id="overrideSection" style="margin-top: 10px; padding: 10px; border-top: 1px solid rgba(255,255,255,0.1);">
+          <h3 style="font-size: 13px; margin-bottom: 5px;">Customize Media Info</h3>
+          <select id="actionWordingSelect" style="width: 100%; margin-bottom: 5px; padding: 5px; box-sizing: border-box; background: #222; color: #fff; border: 1px solid rgba(255,255,255,0.2); border-radius: 4px;">
+            <option value="Auto">Status Wording: Auto</option>
+            <option value="Watching">Status Wording: Watching</option>
+            <option value="Listening">Status Wording: Listening to</option>
+            <option value="Browsing">Status Wording: Browsing</option>
+            <option value="Idling">Status Wording: Idling on</option>
+            <option value="None">Status Wording: None</option>
+          </select>
+          <input id="overrideTitle" type="text" placeholder="Custom Title" style="width: 100%; margin-bottom: 5px; padding: 5px; box-sizing: border-box;">
+          <input id="overrideImage" type="url" placeholder="Custom Poster URL" style="width: 100%; margin-bottom: 5px; padding: 5px; box-sizing: border-box;">
+          <input id="overrideUrl" type="url" placeholder="Custom Target URL (https://...)" style="width: 100%; margin-bottom: 5px; padding: 5px; box-sizing: border-box;">
+          <input id="overridePlatform" type="text" placeholder="Custom Platform (e.g. Netflix, Prime)" style="width: 100%; margin-bottom: 5px; padding: 5px; box-sizing: border-box;">
+          <div style="display: flex; gap: 5px;">
+            <button id="saveOverride" type="button" style="flex: 1;">Save</button>
+            <button id="resetOverride" type="button" class="secondary" style="flex: 1;">Reset</button>
+          </div>
+        </div>
+        <div class="actions" style="margin-top: 10px;">
           <button id="login" type="button">Connect Discord</button>
           <button id="logout" type="button">Disconnect</button>
         </div>

@@ -27,26 +27,77 @@ function getVideoId() {
 
 function getAuthor() {
   return (
+    text("ytd-watch-metadata #owner #channel-name a") ||
     text("ytd-watch-metadata ytd-channel-name a") ||
     text("#owner #channel-name a") ||
+    text("#owner #channel-name yt-formatted-string") ||
+    text("ytd-reel-player-header-renderer #channel-name a") ||
     text(".slim-owner-byline") ||
     attr('link[itemprop="name"]', "content") ||
-    attr('span[itemprop="author"] link[itemprop="name"]', "content")
+    attr('span[itemprop="author"] link[itemprop="name"]', "content") ||
+    text(".ytp-title-channel-name")
   );
 }
 
 function getTitle() {
-  return (
+  const title = (
+    text("ytd-watch-metadata #title yt-formatted-string") ||
     text("ytd-watch-metadata h1 yt-formatted-string") ||
+    text("ytd-watch-metadata h1") ||
+    text("h1.ytd-watch-metadata") ||
     text("h1.title") ||
+    text("#title h1 yt-formatted-string") ||
+    text("ytd-reel-player-header-renderer .title") ||
+    text("h1.ytd-video-primary-info-renderer") ||
+    text(".ytp-title-link") ||
     attr('meta[property="og:title"]', "content") ||
-    attr('meta[name="title"]', "content") ||
-    document.title.replace(/\s+-\s+YouTube$/, "")
+    attr('meta[name="title"]', "content")
   );
+
+  if (title && title.toLowerCase() !== "youtube") return title;
+
+  return document.title
+    .replace(/^\(\d+\)\s*/, "")
+    .replace(/\s+-\s+YouTube$/i, "")
+    .trim();
 }
 
 function getThumbnail(videoId) {
   return videoId ? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg` : "";
+}
+
+function getChannelAvatar() {
+  const selectors = [
+    "ytd-watch-metadata #owner img#img",
+    "ytd-watch-metadata #owner #avatar img",
+    "ytd-watch-metadata #owner img",
+    "ytd-video-owner-renderer #avatar img",
+    "ytd-video-owner-renderer img",
+    "#owner #avatar img",
+    "ytd-reel-player-header-renderer img",
+    ".ytp-title-channel-logo img"
+  ];
+  for (const s of selectors) {
+    const img = document.querySelector(s);
+    if (img) {
+      const src = img.src || img.getAttribute("src") || img.getAttribute("data-src") || "";
+      if (src && !src.startsWith("data:")) {
+        return src.startsWith("//") ? `https:${src}` : src;
+      }
+    }
+  }
+  return "";
+}
+
+function getCategoryInfo() {
+  const url = window.location.href;
+  if (url.includes("music.youtube.com")) {
+    return { platform: "YouTube Music", action: "Listen" };
+  }
+  if (url.includes("/shorts/")) {
+    return { platform: "YouTube Short", action: "Watch" };
+  }
+  return { platform: "YouTube", action: "Watch" };
 }
 
 function getVideoPayload() {
@@ -56,16 +107,18 @@ function getVideoPayload() {
 
   const duration = Number.isFinite(video.duration) ? video.duration : 0;
   const currentTime = Number.isFinite(video.currentTime) ? video.currentTime : 0;
+  const category = getCategoryInfo();
 
   return {
-    platform: "YouTube",
+    platform: category.platform,
     source: "youtube",
-    action: "Watch",
+    action: category.action,
     url: window.location.href,
     videoId,
     mediaId: videoId,
     title: getTitle(),
     author: getAuthor(),
+    channelAvatar: getChannelAvatar(),
     thumbnail: getThumbnail(videoId),
     currentTime,
     duration,
@@ -124,20 +177,45 @@ function announceSeen() {
   );
 }
 
+let lastUrl = location.href;
+let lastVideoId = "";
+
 function bindVideoEvents() {
   const video = document.querySelector("video");
-  if (!video || video.dataset.discordRpcBound === "true") return;
+  const currentVideoId = getVideoId();
+  if (!video) return;
 
-  video.dataset.discordRpcBound = "true";
-  ["play", "pause", "seeked", "ratechange", "ended", "loadedmetadata"].forEach((eventName) => {
-    video.addEventListener(eventName, () => {
-      if (eventName === "play") lastStartedAt = Date.now();
-      sendUpdate(true);
+  if (video.dataset.discordRpcBoundId !== currentVideoId) {
+    video.dataset.discordRpcBoundId = currentVideoId;
+    ["play", "pause", "seeked", "ratechange", "ended", "loadedmetadata"].forEach((eventName) => {
+      video.addEventListener(eventName, () => {
+        if (eventName === "play") lastStartedAt = Date.now();
+        sendUpdate(true);
+      });
     });
-  });
+  }
+}
+
+function handleNavigation() {
+  const currentVideoId = getVideoId();
+  if (location.href !== lastUrl || (currentVideoId && currentVideoId !== lastVideoId)) {
+    lastUrl = location.href;
+    lastVideoId = currentVideoId;
+    lastPayloadKey = "";
+    lastStartedAt = Date.now();
+
+    [100, 400, 1000, 2000, 3500].forEach((delay) => {
+      setTimeout(() => {
+        bindVideoEvents();
+        announceSeen();
+        sendUpdate(true);
+      }, delay);
+    });
+  }
 }
 
 setInterval(() => {
+  handleNavigation();
   bindVideoEvents();
   const shouldForce = Date.now() - lastForcedAt > FORCE_INTERVAL_MS;
   if (shouldForce) lastForcedAt = Date.now();
@@ -145,13 +223,8 @@ setInterval(() => {
   announceSeen();
 }, SEND_INTERVAL_MS);
 
-let lastUrl = location.href;
 new MutationObserver(() => {
-  if (location.href !== lastUrl) {
-    lastUrl = location.href;
-    lastPayloadKey = "";
-    setTimeout(() => sendUpdate(true), 700);
-  }
+  handleNavigation();
   bindVideoEvents();
 }).observe(document.documentElement, { childList: true, subtree: true });
 
@@ -159,13 +232,7 @@ bindVideoEvents();
 announceSeen();
 sendUpdate(true);
 
-["yt-navigate-finish", "yt-page-data-updated", "yt-player-updated"].forEach((eventName) => {
-  window.addEventListener(eventName, () => {
-    lastPayloadKey = "";
-    setTimeout(() => {
-      bindVideoEvents();
-      announceSeen();
-      sendUpdate(true);
-    }, 250);
-  });
+["yt-navigate-start", "yt-navigate-finish", "yt-page-data-updated", "yt-player-updated", "spfdone"].forEach((eventName) => {
+  window.addEventListener(eventName, handleNavigation);
+  document.addEventListener(eventName, handleNavigation);
 });

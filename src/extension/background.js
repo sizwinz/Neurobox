@@ -10,10 +10,15 @@ const DEFAULT_STATE = {
   authenticated: false,
   connected: false,
   enabled: true,
+  showUrl: true,
+  showYoutubeChannel: true,
+  actionWording: "Auto",
   siteEnabled: {
     youtube: true,
     soundcloud: true
   },
+  rpcWhitelist: ["youtube.com", "soundcloud.com"],
+  mediaOverrides: {},
   lastError: "",
   lastVideo: null,
   lastMediaPage: null,
@@ -97,6 +102,12 @@ async function requestDiscord(path, options = {}) {
   if (response.status === 204) return null;
 
   const body = await response.json().catch(() => ({}));
+  if (response.status === 429) {
+    const retryAfter = body.retry_after || 5;
+    state = { ...state, lastError: `Rate limited by Discord. Retrying in ${Math.ceil(retryAfter)}s...` };
+    saveState();
+    return null;
+  }
   if (!response.ok) {
     throw new Error(body.message || `Discord API error ${response.status}`);
   }
@@ -219,7 +230,18 @@ async function completeDiscordLogin(redirectUrl) {
 
 function truncate(text, maxLength) {
   if (!text) return "";
-  return text.length <= maxLength ? text : `${text.slice(0, maxLength - 1)}...`;
+  const cleaned = String(text).replace(/[\r\n\t]+/g, " ").trim();
+  return cleaned.length <= maxLength ? cleaned : `${cleaned.slice(0, maxLength - 1)}...`;
+}
+
+function isValidHttpUrl(string) {
+  if (!string) return false;
+  try {
+    const url = new URL(string);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch (_) {
+    return false;
+  }
 }
 
 function makeActivity(video) {
@@ -228,35 +250,92 @@ function makeActivity(video) {
   const remainingMs = Math.max(video.timeLeft || 0, 0) * 1000;
   const playing = !video.paused && !video.ended && video.duration > 0;
   const platform = video.platform || "Media";
-  const action = video.action || (platform === "SoundCloud" ? "Listen" : "Watch");
-  const activityType = platform === "SoundCloud" ? 2 : 3;
-  const largeImage =
+  const selectedWording = video.actionWording || state.actionWording || "Auto";
+
+  let activityType = 3;
+  let wordingPrefix = "";
+  if (selectedWording === "Watching") {
+    activityType = 3;
+    wordingPrefix = "Watching";
+  } else if (selectedWording === "Listening") {
+    activityType = 2;
+    wordingPrefix = "Listening to";
+  } else if (selectedWording === "Browsing" || selectedWording === "Idling") {
+    activityType = 0;
+    wordingPrefix = selectedWording === "Browsing" ? "Browsing" : "Idling on";
+  } else if (selectedWording === "None") {
+    activityType = 0;
+    wordingPrefix = "";
+  } else {
+    activityType = platform === "SoundCloud" || video.action === "Listen" ? 2 : 3;
+    wordingPrefix = activityType === 2 ? "Listening to" : "Watching";
+  }
+
+  const isDomainName = (str) => Boolean(str && (str.includes(".") || str === video.domain));
+  const showUrl = state.showUrl !== false;
+  const allowChannel = video.source !== "youtube" || state.showYoutubeChannel !== false;
+  const rawAuthor = allowChannel ? video.author : "";
+  const displayAuthor = !showUrl && isDomainName(rawAuthor) ? "" : rawAuthor;
+
+  const speedText = video.playbackRate && video.playbackRate !== 1 ? ` (${video.playbackRate}x speed)` : "";
+
+  let stateText = "";
+  if (playing) {
+    if (displayAuthor) {
+      stateText = `by ${displayAuthor}${speedText}`;
+    } else {
+      if (wordingPrefix) {
+        stateText = showUrl ? `${wordingPrefix} on ${platform}${speedText}` : `${wordingPrefix}${speedText}`;
+      } else {
+        stateText = showUrl ? `${platform}${speedText}` : speedText.trim();
+      }
+    }
+  } else {
+    stateText = showUrl ? `Paused on ${platform}` : "Paused";
+  }
+
+  const rawLargeImage =
     video.largeImage ||
     (platform === "YouTube" && video.videoId ? `youtube:${video.videoId}` : undefined);
-  const stateText = video.author ? `by ${video.author}` : platform;
+  const validLargeImage = rawLargeImage && (rawLargeImage.startsWith("youtube:") || isValidHttpUrl(rawLargeImage)) ? rawLargeImage : undefined;
+  const validSmallImage = isValidHttpUrl(video.channelAvatar) ? video.channelAvatar : undefined;
+  const includeUrl = showUrl && isValidHttpUrl(video.url);
+
+  const assets = {
+    large_image: validLargeImage,
+    large_text: truncate(video.title || platform, 128)
+  };
+
+  if (validSmallImage) {
+    assets.small_image = validSmallImage;
+    assets.small_text = truncate(displayAuthor || platform, 128);
+  }
+
+  const buttonLabel = wordingPrefix ? `${wordingPrefix} on ${platform}` : platform;
+
   const activity = {
     application_id: getClientId(),
     platform: "desktop",
     supported_platforms: ["desktop"],
     type: activityType,
     name: platform,
-    details: truncate(video.title || `${action}ing ${platform}`, 128),
-    state: truncate(playing ? stateText : `${stateText} - Paused`, 128),
-    assets: {
-      large_image: largeImage,
-      large_text: truncate(video.title || platform, 128),
-      large_url: video.url
-    },
-    buttons: [
+    details: truncate(video.title || `${wordingPrefix} ${platform}`.trim(), 128),
+    state: truncate(stateText, 128),
+    assets
+  };
+
+  if (includeUrl) {
+    activity.assets.large_url = video.url;
+    activity.buttons = [
       {
-        label: `${action} on ${platform}`,
+        label: truncate(buttonLabel, 32),
         url: video.url
       }
-    ],
-    metadata: {
+    ];
+    activity.metadata = {
       button_urls: [video.url]
-    }
-  };
+    };
+  }
 
   if (playing) {
     activity.timestamps = {
@@ -268,13 +347,27 @@ function makeActivity(video) {
   return activity;
 }
 
+function normalizeUrl(urlStr) {
+  if (!urlStr) return "";
+  let clean = urlStr.trim();
+  if (clean && !/^https?:\/\//i.test(clean)) {
+    clean = `https://${clean}`;
+  }
+  return isValidHttpUrl(clean) ? clean : urlStr;
+}
+
 function presenceKey(video) {
   return JSON.stringify({
     platform: video.platform || "YouTube",
     id: video.mediaId || video.videoId,
     title: video.title,
     author: video.author,
+    url: video.url,
     paused: video.paused,
+    showUrl: state.showUrl !== false,
+    showYoutubeChannel: state.showYoutubeChannel !== false,
+    actionWording: state.actionWording || "Auto",
+    playbackRate: video.playbackRate || 1,
     bucket: Math.floor((video.currentTime || 0) / 10)
   });
 }
@@ -376,17 +469,24 @@ async function updatePresence(video, force = false) {
   };
   if (headlessToken) body.token = headlessToken;
 
-  const result = await requestDiscord("/users/@me/headless-sessions", {
-    method: "POST",
-    body: JSON.stringify(body)
-  });
+  let result = null;
+  try {
+    result = await requestDiscord("/users/@me/headless-sessions", {
+      method: "POST",
+      body: JSON.stringify(body)
+    });
+  } catch (error) {
+    state = { ...state, connected: false, lastError: error.message };
+    saveState();
+    return;
+  }
 
   if (generation !== presenceGeneration || !state.enabled || isSuppressed(video)) {
     await clearPresence({ waitForWrites: false }).catch(() => {});
     return;
   }
 
-  rememberHeadlessToken(result.token || headlessToken);
+  rememberHeadlessToken(result?.token || headlessToken);
   lastPresenceKey = key;
   lastPresenceSentAt = now;
   state = { ...state, authenticated: true, connected: true, lastError: "" };
@@ -448,16 +548,53 @@ async function logoutDiscord() {
   saveState();
 }
 
+function applyMediaOverrides(video) {
+  if (!video) return video;
+  const domain = video.domain || video.source;
+  const overrides = state.mediaOverrides?.[domain];
+  if (!overrides) return video;
+
+  return {
+    ...video,
+    platform: overrides.platform || video.platform,
+    title: overrides.title || video.title,
+    thumbnail: overrides.image || video.thumbnail,
+    largeImage: overrides.image || video.largeImage,
+    url: overrides.url ? normalizeUrl(overrides.url) : video.url
+  };
+}
+
+function isGenericTitleString(str) {
+  if (!str) return true;
+  const s = str.trim().toLowerCase();
+  return /^(player|video|watch|stream|play|html5 player|jw player|video player|\w+\.php|\w+\.html)$/i.test(s) || s.endsWith(".php") || s.endsWith(".html");
+}
+
 function handleVideoUpdate(video) {
   const source = normalizeSource(video.source || video.platform || "youtube");
   const previous = mediaBySource[source];
+  const pageTitle = state.lastMediaPage?.title;
+
+  let resolvedTitle = video.title;
+  if (isGenericTitleString(resolvedTitle) && pageTitle && !isGenericTitleString(pageTitle)) {
+    resolvedTitle = pageTitle;
+  }
+
+  const isSameMedia = previous && (
+    (video.videoId && previous.videoId === video.videoId) ||
+    (video.mediaId && previous.mediaId === video.mediaId) ||
+    (video.url && previous.url === video.url)
+  );
+  const baseMedia = isSameMedia ? previous : {};
+
   const becamePlaying = previous ? previous.paused && !video.paused : !video.paused;
-  const media = {
-    ...previous,
+  const media = applyMediaOverrides({
+    ...baseMedia,
     ...video,
+    title: resolvedTitle,
     source,
-    lastStartedAt: video.lastStartedAt || (becamePlaying ? Date.now() : previous?.lastStartedAt || video.updatedAt || Date.now())
-  };
+    lastStartedAt: video.lastStartedAt || (becamePlaying ? Date.now() : baseMedia?.lastStartedAt || video.updatedAt || Date.now())
+  });
   const suppressed = suppressedBySource[source];
   if (
     !media.paused &&
@@ -552,6 +689,45 @@ browserApi.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
 
+  if (message.type === "set-show-url") {
+    state = { ...state, showUrl: Boolean(message.showUrl), lastError: "" };
+    saveState();
+    syncActivePresence(true)
+      .then(() => sendResponse(state))
+      .catch((error) => {
+        state = { ...state, connected: false, lastError: error.message };
+        saveState();
+        sendResponse(state);
+      });
+    return true;
+  }
+
+  if (message.type === "set-show-youtube-channel") {
+    state = { ...state, showYoutubeChannel: Boolean(message.showYoutubeChannel), lastError: "" };
+    saveState();
+    syncActivePresence(true)
+      .then(() => sendResponse(state))
+      .catch((error) => {
+        state = { ...state, connected: false, lastError: error.message };
+        saveState();
+        sendResponse(state);
+      });
+    return true;
+  }
+
+  if (message.type === "set-action-wording") {
+    state = { ...state, actionWording: message.wording || "Auto", lastError: "" };
+    saveState();
+    syncActivePresence(true)
+      .then(() => sendResponse(state))
+      .catch((error) => {
+        state = { ...state, connected: false, lastError: error.message };
+        saveState();
+        sendResponse(state);
+      });
+    return true;
+  }
+
   if (message.type === "set-site-enabled") {
     const source = normalizeSource(message.source);
     state = {
@@ -630,12 +806,40 @@ browserApi.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
 
+  if (message.type === "toggle-domain-whitelist") {
+    const domain = message.domain;
+    const whitelist = state.rpcWhitelist || ["youtube.com", "soundcloud.com"];
+    const exists = whitelist.includes(domain);
+    const updatedWhitelist = exists ? whitelist.filter((d) => d !== domain) : [...whitelist, domain];
+    state = { ...state, rpcWhitelist: updatedWhitelist };
+    browserApi.storage.local.set({ rpcWhitelist: updatedWhitelist });
+    sendResponse({ ok: true, isWhitelisted: !exists, whitelist: updatedWhitelist });
+    return true;
+  }
+
+  if (message.type === "set-domain-override") {
+    const { domain, title, image, url, platform } = message;
+    const overrides = { ...(state.mediaOverrides || {}) };
+    if (!title && !image && !url && !platform) {
+      delete overrides[domain];
+    } else {
+      overrides[domain] = { title, image, url, platform };
+    }
+    state = { ...state, mediaOverrides: overrides };
+    browserApi.storage.local.set({ mediaOverrides: overrides });
+    syncActivePresence(true);
+    sendResponse({ ok: true, overrides });
+    return true;
+  }
+
   return false;
 });
 
 browserApi.runtime.onInstalled.addListener(() => {
-  browserApi.storage.local.get(["rpcState", "discordTokens", "rpcSession"], (result) => {
+  browserApi.storage.local.get(["rpcState", "discordTokens", "rpcSession", "rpcWhitelist", "mediaOverrides"], (result) => {
     state = { ...DEFAULT_STATE, ...(result.rpcState || {}) };
+    state.rpcWhitelist = result.rpcWhitelist || ["youtube.com", "soundcloud.com"];
+    state.mediaOverrides = result.mediaOverrides || {};
     state.siteEnabled = { ...DEFAULT_STATE.siteEnabled, ...(state.siteEnabled || {}) };
     tokens = result.discordTokens || null;
     headlessToken = result.rpcSession?.headlessToken || "";
@@ -646,8 +850,10 @@ browserApi.runtime.onInstalled.addListener(() => {
   });
 });
 
-browserApi.storage.local.get(["rpcState", "discordTokens", "rpcSession"], (result) => {
+browserApi.storage.local.get(["rpcState", "discordTokens", "rpcSession", "rpcWhitelist", "mediaOverrides"], (result) => {
   state = { ...DEFAULT_STATE, ...(result.rpcState || {}) };
+  state.rpcWhitelist = result.rpcWhitelist || ["youtube.com", "soundcloud.com"];
+  state.mediaOverrides = result.mediaOverrides || {};
   state.siteEnabled = { ...DEFAULT_STATE.siteEnabled, ...(state.siteEnabled || {}) };
   tokens = result.discordTokens || null;
   headlessToken = result.rpcSession?.headlessToken || "";
@@ -656,3 +862,4 @@ browserApi.storage.local.get(["rpcState", "discordTokens", "rpcSession"], (resul
   state = { ...state, authenticated: Boolean(tokens?.accessToken), connected: Boolean(tokens?.accessToken) };
   saveState();
 });
+
