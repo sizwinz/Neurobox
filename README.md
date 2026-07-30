@@ -4,40 +4,40 @@ A privacy-first Web Extension that automatically displays your media playback in
 
 ## Screenshots
 
-<table border="1" width="100%">
+<table border="1">
   <thead>
     <tr>
-      <th align="center" width="300">Extension Control Panel</th>
+      <th align="center" width="310">Extension Control Panel</th>
       <th align="center">Discord Presence Examples</th>
     </tr>
   </thead>
   <tbody>
     <tr>
-      <!-- Left Column: Fixed width ensures it does not get squished -->
-      <td valign="top" align="center" width="300">
+      <!-- Left Column: Fixed to match the natural width of the extension popup -->
+      <td valign="top" align="center" width="310">
         <img src="assets/popup-screenshot.png" alt="Extension Control Panel" width="100%">
       </td>
-      <!-- Right Column: Expands to fill the remaining area -->
+      <!-- Right Column: Contains the vertically stacked inner table -->
       <td valign="top">
         <table border="1" style="margin: 0 auto; text-align: center; width: 100%;">
           <thead>
             <tr>
-              <th>Platform / Context</th>
+              <th width="180">Platform / Context</th>
               <th>Preview</th>
             </tr>
           </thead>
           <tbody>
             <tr>
-              <td><strong>YouTube Video</strong></td>
-              <td><img src="assets/discord-rpc-1.png" alt="Discord Presence of Youtube Video"></td>
+              <td valign="middle"><strong>YouTube Video</strong></td>
+              <td><img src="assets/discord-rpc-1.png" alt="Discord Presence of Youtube Video" width="100%"></td>
             </tr>
             <tr>
-              <td><strong>Universal Web Media</strong></td>
-              <td><img src="assets/discord-rpc-2.png" alt="Discord Presence of Universal Web Media"></td>
+              <td valign="middle"><strong>Universal Web Media</strong></td>
+              <td><img src="assets/discord-rpc-2.png" alt="Discord Presence of Universal Web Media" width="100%"></td>
             </tr>
             <tr>
-              <td><strong>YouTube Music</strong></td>
-              <td><img src="assets/discord-rpc-3.png" alt="Discord Presence of Youtube Music"></td>
+              <td valign="middle"><strong>YouTube Music</strong></td>
+              <td><img src="assets/discord-rpc-3.png" alt="Discord Presence of Youtube Music" width="100%"></td>
             </tr>
           </tbody>
         </table>
@@ -45,7 +45,6 @@ A privacy-first Web Extension that automatically displays your media playback in
     </tr>
   </tbody>
 </table>
-
 
 
 ## Key Features
