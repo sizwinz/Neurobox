@@ -4,20 +4,20 @@ A privacy-first Web Extension that automatically displays your media playback in
 
 ## Screenshots
 
-<table border="1">
+<table border="1" width="100%">
   <thead>
     <tr>
-      <th align="center">Extension Control Panel</th>
+      <th align="center" width="300">Extension Control Panel</th>
       <th align="center">Discord Presence Examples</th>
     </tr>
   </thead>
   <tbody>
     <tr>
-      <!-- Left Column: Main Extension Screenshot -->
-      <td valign="top" align="center">
-        <img src="assets/popup-screenshot.png" alt="Extension Control Panel" width="300">
+      <!-- Left Column: Fixed width ensures it does not get squished -->
+      <td valign="top" align="center" width="300">
+        <img src="assets/popup-screenshot.png" alt="Extension Control Panel" width="100%">
       </td>
-      <!-- Right Column: Nested Table Stacked Vertically -->
+      <!-- Right Column: Expands to fill the remaining area -->
       <td valign="top">
         <table border="1" style="margin: 0 auto; text-align: center; width: 100%;">
           <thead>
@@ -45,6 +45,7 @@ A privacy-first Web Extension that automatically displays your media playback in
     </tr>
   </tbody>
 </table>
+
 
 
 ## Key Features
