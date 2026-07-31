@@ -25,23 +25,34 @@ function getVideoId() {
   return url.searchParams.get("v") || attr('meta[itemprop="videoId"]', "content");
 }
 
+function getMainVideoElement() {
+  const videos = Array.from(document.querySelectorAll("video"));
+  if (videos.length === 0) return null;
+  const active = videos.find((v) => !v.paused && !v.ended && Number.isFinite(v.duration) && v.duration > 0);
+  if (active) return active;
+  const valid = videos.filter((v) => Number.isFinite(v.duration) && v.duration > 0);
+  return valid[0] || videos[0] || null;
+}
+
 function getAuthor() {
   return (
     text("ytd-watch-metadata #owner #channel-name a") ||
     text("ytd-watch-metadata ytd-channel-name a") ||
     text("#owner #channel-name a") ||
     text("#owner #channel-name yt-formatted-string") ||
+    text("#owner #channel-name yt-attributed-string") ||
     text("ytd-reel-player-header-renderer #channel-name a") ||
     text(".slim-owner-byline") ||
+    text(".ytp-title-channel-name") ||
     attr('link[itemprop="name"]', "content") ||
-    attr('span[itemprop="author"] link[itemprop="name"]', "content") ||
-    text(".ytp-title-channel-name")
+    attr('span[itemprop="author"] link[itemprop="name"]', "content")
   );
 }
 
 function getTitle() {
   const title = (
     text("ytd-watch-metadata #title yt-formatted-string") ||
+    text("ytd-watch-metadata #title yt-attributed-string") ||
     text("ytd-watch-metadata h1 yt-formatted-string") ||
     text("ytd-watch-metadata h1") ||
     text("h1.ytd-watch-metadata") ||
@@ -59,6 +70,7 @@ function getTitle() {
   return document.title
     .replace(/^\(\d+\)\s*/, "")
     .replace(/\s+-\s+YouTube$/i, "")
+    .replace(/\s+-\s+YouTube Music$/i, "")
     .trim();
 }
 
@@ -101,7 +113,7 @@ function getCategoryInfo() {
 }
 
 function getVideoPayload() {
-  const video = document.querySelector("video");
+  const video = getMainVideoElement();
   const videoId = getVideoId();
   if (!video || !videoId) return null;
 

@@ -10,6 +10,7 @@ const jsFiles = [
   "src/extension/background.js",
   "src/extension/content-youtube.js",
   "src/extension/content-soundcloud.js",
+  "src/extension/content-generic.js",
   "src/extension/popup.js",
   "scripts/build-firefox.js",
   "scripts/package-extension.js"

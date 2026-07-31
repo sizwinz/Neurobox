@@ -39,7 +39,7 @@ function buildTarget(target) {
   copyFile(path.join(root, "LICENSE"), path.join(out, "LICENSE"));
   copyFile(path.join(root, "PRIVACY.md"), path.join(out, "PRIVACY.md"));
 
-  for (const file of ["config.js", "background.js", "content-youtube.js", "content-soundcloud.js", "popup.html", "popup.css", "popup.js"]) {
+  for (const file of ["config.js", "background.js", "content-youtube.js", "content-soundcloud.js", "content-generic.js", "popup.html", "popup.css", "popup.js"]) {
     copyFile(path.join(root, "src", "extension", file), path.join(out, "src", "extension", file));
   }
 

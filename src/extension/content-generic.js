@@ -10,36 +10,69 @@
   function cleanTitle(rawTitle) {
     if (!rawTitle) return "";
     return rawTitle
-      .replace(/\s*[\-\|]\s*(Watch|Free|Online|HD|1080p|Full Movie|Streaming).*$/i, "")
-      .replace(/\s*\((Watch|Free|Online|HD|1080p)\)/gi, "")
+      .replace(/^\(\d+\)\s*/, "")
+      .replace(/\s*[\-\|]\s*(Watch|Free|Online|HD|1080p|Full Movie|Streaming|Official Video|Official Audio).*$/i, "")
+      .replace(/\s*\((Watch|Free|Online|HD|1080p|Full Movie)\)/gi, "")
+      .replace(/\s*\[(Watch|Free|Online|HD|1080p|Full Movie)\]/gi, "")
       .trim();
   }
 
   function getMediaTitle() {
     const ogTitle = document.querySelector('meta[property="og:title"]')?.getAttribute("content");
-    const rawTitle = ogTitle || document.title || "Video";
+    const twitterTitle = document.querySelector('meta[name="twitter:title"]')?.getAttribute("content");
+    const rawTitle = ogTitle || twitterTitle || document.title || "Video";
     return cleanTitle(rawTitle);
   }
 
   function toAbsoluteUrl(url) {
     if (!url) return "";
     try {
-      return new URL(url, window.location.origin).href;
+      const abs = new URL(url, window.location.origin).href;
+      return /^https?:\/\//i.test(abs) ? abs : "";
     } catch (_) {
       return "";
     }
   }
 
   function getMediaPoster() {
+    const activeMedia = getActiveMediaElement();
+    const mediaPoster = activeMedia && activeMedia.poster ? activeMedia.poster : "";
     const ogImage = document.querySelector('meta[property="og:image"]')?.getAttribute("content");
     const twitterImage = document.querySelector('meta[name="twitter:image"]')?.getAttribute("content");
-    const raw = ogImage || twitterImage || "/favicon.ico";
-    return toAbsoluteUrl(raw);
+    const linkImage = document.querySelector('link[rel="image_src"]')?.getAttribute("href");
+    const appleTouchIcon = document.querySelector('link[rel="apple-touch-icon"]')?.getAttribute("href");
+
+    const raw = mediaPoster || ogImage || twitterImage || linkImage || appleTouchIcon;
+    const absUrl = toAbsoluteUrl(raw);
+    if (absUrl && !absUrl.endsWith(".ico") && !absUrl.includes("favicon")) {
+      return absUrl;
+    }
+    return "";
+  }
+
+  function findAllMediaElements(root = document) {
+    const media = [];
+    const elements = Array.from(root.querySelectorAll("video, audio"));
+    media.push(...elements);
+
+    const allNodes = Array.from(root.querySelectorAll("*"));
+    for (const node of allNodes) {
+      if (node.shadowRoot) {
+        media.push(...findAllMediaElements(node.shadowRoot));
+      }
+    }
+    return media;
   }
 
   function getActiveMediaElement() {
-    const elements = Array.from(document.querySelectorAll("video, audio"));
-    return elements.find((el) => !el.paused && Number.isFinite(el.duration) && el.duration > 0) || elements[0] || null;
+    const elements = findAllMediaElements(document);
+    if (elements.length === 0) return null;
+
+    const playing = elements.find((el) => !el.paused && !el.ended && Number.isFinite(el.duration) && el.duration > 0);
+    if (playing) return playing;
+
+    const withDuration = elements.filter((el) => Number.isFinite(el.duration) && el.duration > 0);
+    return withDuration[0] || elements[0] || null;
   }
 
   function getEffectiveDomain() {
@@ -180,3 +213,4 @@
     }
   }, SEND_INTERVAL_MS);
 })();
+

@@ -6,10 +6,7 @@
   "permissions": [
     "identity",
     "storage",
-    "*://*.youtube.com/*",
-    "*://youtu.be/*",
-    "*://soundcloud.com/*",
-    "*://*.soundcloud.com/*",
+    "<all_urls>",
     "https://discord.com/api/*",
     "https://discord.com/oauth2/*"
   ],
@@ -33,6 +30,13 @@
     {
       "matches": ["*://soundcloud.com/*", "*://*.soundcloud.com/*"],
       "js": ["src/extension/content-soundcloud.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["<all_urls>"],
+      "js": ["src/extension/content-generic.js"],
+      "all_frames": true,
+      "match_about_blank": true,
       "run_at": "document_idle"
     }
   ],

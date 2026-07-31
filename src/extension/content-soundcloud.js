@@ -59,19 +59,21 @@ function getTitle() {
     text(".playbackSoundBadge__titleLink span") ||
     text(".playbackSoundBadge__titleLink") ||
     text(".playbackSoundBadge__title") ||
+    text("a.soundTitle__title") ||
     attr('meta[property="og:title"]', "content") ||
     document.title.replace(/\s+\|\s+Listen online for free on SoundCloud$/, "").replace(/\s+on SoundCloud$/, "")
   );
-  return title.replace(/^Current track:\s*/i, "");
+  return title.replace(/^Current track:\s*/i, "").trim();
 }
 
 function getAuthor() {
   return (
     text(".playbackSoundBadge__lightLink") ||
     text(".playbackSoundBadge__username") ||
+    text("a.soundTitle__username") ||
     attr('meta[property="music:musician"]', "content") ||
     attr('meta[name="twitter:audio:artist_name"]', "content")
-  );
+  ).trim();
 }
 
 function getTrackUrl() {
@@ -96,12 +98,17 @@ function getArtwork() {
     .replace(/-large\./, "-t500x500.");
 }
 
-function getTrackId(trackUrl) {
+function getTrackId(trackUrl, title = "", author = "") {
   try {
     const url = new URL(trackUrl);
-    return url.pathname.split("/").filter(Boolean).join(":") || url.href;
+    const pathParts = url.pathname.split("/").filter(Boolean);
+    const isGenericPage = pathParts.length <= 1 && ["discover", "stream", "feed", "you", "search", "upload", "notifications"].includes(pathParts[0]?.toLowerCase());
+    if (isGenericPage || pathParts.length === 0) {
+      return `sc:${author.toLowerCase()}:${title.toLowerCase()}`;
+    }
+    return pathParts.join(":");
   } catch (_error) {
-    return trackUrl || location.href;
+    return `sc:${author.toLowerCase()}:${title.toLowerCase()}`;
   }
 }
 
@@ -125,7 +132,8 @@ function getSoundCloudPayload() {
   );
   const paused = audio ? audio.paused : !isPlaying;
   const ended = audio ? audio.ended : Boolean(duration && currentTime >= duration);
-  const mediaId = getTrackId(url);
+  const author = getAuthor();
+  const mediaId = getTrackId(url, title, author);
   if (mediaId && mediaId !== lastMediaId) {
     lastMediaId = mediaId;
     lastStartedAt = Date.now();
@@ -138,7 +146,7 @@ function getSoundCloudPayload() {
     url,
     mediaId,
     title,
-    author: getAuthor(),
+    author,
     thumbnail: getArtwork(),
     largeImage: getArtwork(),
     currentTime,
@@ -183,6 +191,9 @@ function sendUpdate(force = false) {
 }
 
 function announceSeen() {
+  const title = getTitle();
+  const author = getAuthor();
+  const url = getTrackUrl();
   browserApi.runtime.sendMessage(
     {
       type: "media-seen",
@@ -190,8 +201,8 @@ function announceSeen() {
       platform: "SoundCloud",
       url: location.href,
       hasMediaElement: Boolean(getAudio() || document.querySelector(".playbackSoundBadge")),
-      mediaId: getTrackId(getTrackUrl()),
-      title: getTitle(),
+      mediaId: getTrackId(url, title, author),
+      title,
       updatedAt: Date.now()
     },
     () => {

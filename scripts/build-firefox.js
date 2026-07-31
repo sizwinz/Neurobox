@@ -18,7 +18,7 @@ function removeDir(dir) {
 removeDir(out);
 copyFile(path.join(root, "manifests", "firefox", "manifest.json"), path.join(out, "manifest.json"));
 
-for (const file of ["config.js", "background.js", "content-youtube.js", "content-soundcloud.js", "popup.html", "popup.css", "popup.js"]) {
+for (const file of ["config.js", "background.js", "content-youtube.js", "content-soundcloud.js", "content-generic.js", "popup.html", "popup.css", "popup.js"]) {
   copyFile(path.join(root, "src", "extension", file), path.join(out, "src", "extension", file));
 }
 
