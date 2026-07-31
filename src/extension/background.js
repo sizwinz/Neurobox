@@ -19,6 +19,7 @@ const DEFAULT_STATE = {
   },
   rpcWhitelist: ["youtube.com", "soundcloud.com"],
   mediaOverrides: {},
+  itemOverrides: {},
   lastError: "",
   lastVideo: null,
   lastMediaPage: null,
@@ -561,19 +562,31 @@ async function logoutDiscord() {
   saveState();
 }
 
+function getMediaKey(video) {
+  if (!video) return "";
+  const id = video.videoId || video.mediaId || video.url || "";
+  return `${video.source || "media"}:${id}`;
+}
+
 function applyMediaOverrides(video) {
   if (!video) return video;
   const domain = video.domain || video.source;
-  const overrides = state.mediaOverrides?.[domain];
-  if (!overrides) return video;
+  const domainOverrides = state.mediaOverrides?.[domain] || {};
+  const mediaKey = getMediaKey(video);
+  const itemOverride = state.itemOverrides?.[mediaKey] || {};
+
+  const customTitle = itemOverride.title !== undefined ? itemOverride.title : (domainOverrides.title || "");
+  const resolvedTitle = customTitle || video.title;
 
   return {
     ...video,
-    platform: overrides.platform || video.platform,
-    title: overrides.title || video.title,
-    thumbnail: overrides.image || video.thumbnail,
-    largeImage: overrides.image || video.largeImage,
-    url: overrides.url ? normalizeUrl(overrides.url) : video.url
+    mediaKey,
+    platform: domainOverrides.platform || video.platform,
+    title: resolvedTitle,
+    customTitle,
+    thumbnail: itemOverride.image || domainOverrides.image || video.thumbnail,
+    largeImage: itemOverride.image || domainOverrides.image || video.largeImage,
+    url: itemOverride.url ? normalizeUrl(itemOverride.url) : (domainOverrides.url ? normalizeUrl(domainOverrides.url) : video.url)
   };
 }
 
@@ -583,7 +596,7 @@ function isGenericTitleString(str) {
   return /^(player|video|watch|stream|play|html5 player|jw player|video player|\w+\.php|\w+\.html)$/i.test(s) || s.endsWith(".php") || s.endsWith(".html");
 }
 
-function handleVideoUpdate(video) {
+function handleVideoUpdate(video, senderTabId) {
   const source = normalizeSource(video.source || video.platform || "youtube");
   const previous = mediaBySource[source];
   const pageTitle = state.lastMediaPage?.title;
@@ -592,6 +605,8 @@ function handleVideoUpdate(video) {
   if (isGenericTitleString(resolvedTitle) && pageTitle && !isGenericTitleString(pageTitle)) {
     resolvedTitle = pageTitle;
   }
+
+  const tabId = senderTabId !== undefined ? senderTabId : (video.tabId !== undefined ? video.tabId : previous?.tabId);
 
   const isSameMedia = previous && (
     (video.videoId && previous.videoId === video.videoId) ||
@@ -604,6 +619,7 @@ function handleVideoUpdate(video) {
   const media = applyMediaOverrides({
     ...baseMedia,
     ...video,
+    tabId,
     title: resolvedTitle,
     source,
     lastStartedAt: video.lastStartedAt || (becamePlaying ? Date.now() : baseMedia?.lastStartedAt || video.updatedAt || Date.now())
@@ -635,14 +651,16 @@ function handleVideoUpdate(video) {
 browserApi.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || !message.type) return false;
 
+  const senderTabId = sender.tab?.id;
+
   if (message.type === "youtube-video") {
-    handleVideoUpdate({ platform: "YouTube", source: "youtube", action: "Watch", mediaId: message.video.videoId, tabId: sender.tab?.id, ...message.video });
+    handleVideoUpdate({ platform: "YouTube", source: "youtube", action: "Watch", mediaId: message.video.videoId, ...message.video }, senderTabId);
     sendResponse({ ok: true });
     return true;
   }
 
   if (message.type === "media-update") {
-    handleVideoUpdate({ tabId: sender.tab?.id, ...message.media });
+    handleVideoUpdate(message.media, senderTabId);
     sendResponse({ ok: true });
     return true;
   }
@@ -841,14 +859,30 @@ browserApi.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message.type === "set-item-override") {
+    const { mediaKey, title, image, url } = message;
+    const itemOverrides = { ...(state.itemOverrides || {}) };
+    if (!title && !image && !url) {
+      delete itemOverrides[mediaKey];
+    } else {
+      itemOverrides[mediaKey] = { title, image, url };
+    }
+    state = { ...state, itemOverrides };
+    browserApi.storage.local.set({ itemOverrides });
+    syncActivePresence(true);
+    sendResponse({ ok: true, itemOverrides });
+    return true;
+  }
+
   return false;
 });
 
-browserApi.runtime.onInstalled.addListener(() => {
-  browserApi.storage.local.get(["rpcState", "discordTokens", "rpcSession", "rpcWhitelist", "mediaOverrides"], (result) => {
+function initStorage() {
+  browserApi.storage.local.get(["rpcState", "discordTokens", "rpcSession", "rpcWhitelist", "mediaOverrides", "itemOverrides"], (result) => {
     state = { ...DEFAULT_STATE, ...(result.rpcState || {}) };
     state.rpcWhitelist = result.rpcWhitelist || ["youtube.com", "soundcloud.com"];
     state.mediaOverrides = result.mediaOverrides || {};
+    state.itemOverrides = result.itemOverrides || {};
     state.siteEnabled = { ...DEFAULT_STATE.siteEnabled, ...(state.siteEnabled || {}) };
     tokens = result.discordTokens || null;
     headlessToken = result.rpcSession?.headlessToken || "";
@@ -857,54 +891,93 @@ browserApi.runtime.onInstalled.addListener(() => {
     state = { ...state, authenticated: Boolean(tokens?.accessToken), connected: Boolean(tokens?.accessToken) };
     saveState();
   });
-});
+}
 
-browserApi.storage.local.get(["rpcState", "discordTokens", "rpcSession", "rpcWhitelist", "mediaOverrides"], (result) => {
-  state = { ...DEFAULT_STATE, ...(result.rpcState || {}) };
-  state.rpcWhitelist = result.rpcWhitelist || ["youtube.com", "soundcloud.com"];
-  state.mediaOverrides = result.mediaOverrides || {};
-  state.siteEnabled = { ...DEFAULT_STATE.siteEnabled, ...(state.siteEnabled || {}) };
-  tokens = result.discordTokens || null;
-  headlessToken = result.rpcSession?.headlessToken || "";
-  headlessTokens = result.rpcSession?.headlessTokens || (headlessToken ? [headlessToken] : []);
-  suppressedBySource = result.rpcSession?.suppressedBySource || {};
-  state = { ...state, authenticated: Boolean(tokens?.accessToken), connected: Boolean(tokens?.accessToken) };
-  saveState();
-});
+browserApi.runtime.onInstalled.addListener(initStorage);
+initStorage();
+
+function cleanupTabMedia(tabId) {
+  let changed = false;
+  const nextMedia = { ...mediaBySource };
+  for (const [src, media] of Object.entries(nextMedia)) {
+    if (media.tabId === tabId) {
+      delete nextMedia[src];
+      changed = true;
+    }
+  }
+  if (changed) {
+    mediaBySource = nextMedia;
+    syncActivePresence(true).catch(() => {});
+  }
+}
 
 if (browserApi.tabs && browserApi.tabs.onRemoved) {
   browserApi.tabs.onRemoved.addListener((tabId) => {
-    let changed = false;
-    const nextMedia = { ...mediaBySource };
-    for (const [src, media] of Object.entries(nextMedia)) {
-      if (media.tabId === tabId) {
-        delete nextMedia[src];
-        changed = true;
-      }
-    }
-    if (changed) {
-      mediaBySource = nextMedia;
-      syncActivePresence(true).catch(() => {});
-    }
+    cleanupTabMedia(tabId);
   });
 }
 
 if (browserApi.tabs && browserApi.tabs.onUpdated) {
   browserApi.tabs.onUpdated.addListener((tabId, changeInfo) => {
-    if (changeInfo.status === "loading" || changeInfo.url) {
-      let changed = false;
-      const nextMedia = { ...mediaBySource };
-      for (const [src, media] of Object.entries(nextMedia)) {
-        if (media.tabId === tabId && changeInfo.url) {
-          delete nextMedia[src];
-          changed = true;
-        }
-      }
-      if (changed) {
-        mediaBySource = nextMedia;
-        syncActivePresence(true).catch(() => {});
-      }
+    if (changeInfo.status === "loading" && changeInfo.url) {
+      cleanupTabMedia(tabId);
     }
   });
 }
+
+if (browserApi.windows && browserApi.windows.onRemoved) {
+  browserApi.windows.onRemoved.addListener(() => {
+    if (browserApi.windows.getAll) {
+      browserApi.windows.getAll({ populate: false }, (windows) => {
+        if (!windows || windows.length === 0) {
+          mediaBySource = {};
+          clearActivePresence().catch(() => {});
+        }
+      });
+    }
+  });
+}
+
+if (browserApi.runtime && browserApi.runtime.onSuspend) {
+  browserApi.runtime.onSuspend.addListener(() => {
+    clearPresence({ waitForWrites: false }).catch(() => {});
+  });
+}
+
+// Background heartbeat to purge stale media, verify tabs, and maintain Discord presence consistency
+setInterval(() => {
+  const now = Date.now();
+  const STALE_THRESHOLD_MS = 12000;
+  let changed = false;
+  const nextMedia = { ...mediaBySource };
+
+  for (const [src, media] of Object.entries(nextMedia)) {
+    const age = now - (media.updatedAt || 0);
+    if (age > STALE_THRESHOLD_MS) {
+      delete nextMedia[src];
+      changed = true;
+      continue;
+    }
+
+    if (media.tabId !== undefined && browserApi.tabs && browserApi.tabs.get) {
+      browserApi.tabs.get(media.tabId, (tab) => {
+        if (browserApi.runtime.lastError || !tab) {
+          if (mediaBySource[src]?.tabId === media.tabId) {
+            const current = { ...mediaBySource };
+            delete current[src];
+            mediaBySource = current;
+            syncActivePresence(true).catch(() => {});
+          }
+        }
+      });
+    }
+  }
+
+  if (changed) {
+    mediaBySource = nextMedia;
+  }
+
+  syncActivePresence(false).catch(() => {});
+}, 5000);
+
 
