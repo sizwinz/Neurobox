@@ -55,7 +55,9 @@ function updateDomainUI(state) {
 
   const override = state.mediaOverrides?.[currentDomain];
   if (override && document.activeElement !== overrideTitle && document.activeElement !== overrideImage && document.activeElement !== overrideUrl && document.activeElement !== overridePlatform) {
-    overrideTitle.value = override.title || "";
+    if (!state.lastVideo) {
+      overrideTitle.value = override.title || "";
+    }
     overrideImage.value = override.image || "";
     overrideUrl.value = override.url || "";
     overridePlatform.value = override.platform || "";
@@ -81,10 +83,16 @@ function render(state) {
     title.textContent = video.title || "Untitled video";
     author.textContent = video.author ? `by ${video.author}` : "";
     time.textContent = `${formatTime(video.currentTime)} elapsed, ${formatTime(video.timeLeft)} left`;
+    if (document.activeElement !== overrideTitle) {
+      overrideTitle.value = video.customTitle || video.title || "";
+    }
   } else {
     title.textContent = "No media detected";
     author.textContent = "";
     time.textContent = "";
+    if (document.activeElement !== overrideTitle && !state.mediaOverrides?.[currentDomain]?.title) {
+      overrideTitle.value = "";
+    }
   }
 
   if (!video && state.lastMediaPage) {
@@ -184,31 +192,69 @@ toggleWhitelist.addEventListener("click", () => {
 });
 
 saveOverride.addEventListener("click", () => {
-  if (!currentDomain) return;
   const newTitle = overrideTitle.value.trim();
   const newImage = overrideImage.value.trim();
   const newUrl = overrideUrl.value.trim();
   const newPlatform = overridePlatform.value.trim();
-  browserApi.runtime.sendMessage(
-    { type: "set-domain-override", domain: currentDomain, title: newTitle, image: newImage, url: newUrl, platform: newPlatform },
-    () => {
+
+  let lastVideoMediaKey = "";
+  browserApi.runtime.sendMessage({ type: "get-state" }, (currentState) => {
+    const video = currentState?.lastVideo;
+    if (video && video.mediaKey) {
+      lastVideoMediaKey = video.mediaKey;
+      browserApi.runtime.sendMessage({
+        type: "set-item-override",
+        mediaKey: video.mediaKey,
+        title: newTitle,
+        image: newImage,
+        url: newUrl
+      });
+    }
+
+    if (currentDomain) {
+      browserApi.runtime.sendMessage(
+        {
+          type: "set-domain-override",
+          domain: currentDomain,
+          title: lastVideoMediaKey ? "" : newTitle,
+          image: newImage,
+          url: newUrl,
+          platform: newPlatform
+        },
+        () => refresh()
+      );
+    } else {
       refresh();
     }
-  );
+  });
 });
 
 resetOverride.addEventListener("click", () => {
-  if (!currentDomain) return;
-  overrideTitle.value = "";
-  overrideImage.value = "";
-  overrideUrl.value = "";
-  overridePlatform.value = "";
-  browserApi.runtime.sendMessage(
-    { type: "set-domain-override", domain: currentDomain, title: "", image: "", url: "", platform: "" },
-    () => {
+  const newPlatform = "";
+  browserApi.runtime.sendMessage({ type: "get-state" }, (currentState) => {
+    const video = currentState?.lastVideo;
+    if (video && video.mediaKey) {
+      browserApi.runtime.sendMessage({
+        type: "set-item-override",
+        mediaKey: video.mediaKey,
+        title: "",
+        image: "",
+        url: ""
+      });
+    }
+
+    if (currentDomain) {
+      overrideImage.value = "";
+      overrideUrl.value = "";
+      overridePlatform.value = "";
+      browserApi.runtime.sendMessage(
+        { type: "set-domain-override", domain: currentDomain, title: "", image: "", url: "", platform: "" },
+        () => refresh()
+      );
+    } else {
       refresh();
     }
-  );
+  });
 });
 
 callbackForm.addEventListener("submit", (event) => {
