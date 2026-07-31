@@ -93,6 +93,7 @@ async function requestDiscord(path, options = {}) {
   const accessToken = await getAccessToken();
   const response = await fetch(`${DISCORD_API}${path}`, {
     ...options,
+    keepalive: true,
     headers: {
       Authorization: `Bearer ${accessToken}`,
       "Content-Type": "application/json",
@@ -385,26 +386,25 @@ function isSourceEnabled(source) {
 
 function chooseActiveMedia() {
   const now = Date.now();
-  const STALE_TIMEOUT_MS = 15000;
+  const ACTIVE_TIMEOUT_MS = 6000;
 
-  return Object.values(mediaBySource)
-    .filter((media) => {
-      if (!state.enabled || !isSourceEnabled(media.source) || media.ended || isSuppressed(media)) {
-        return false;
-      }
-      const age = now - (media.updatedAt || 0);
-      if (age > STALE_TIMEOUT_MS) return false;
-      return true;
-    })
-    .sort((a, b) => {
-      const aPlaying = !a.paused;
-      const bPlaying = !b.paused;
-      if (aPlaying !== bPlaying) return bPlaying ? 1 : -1;
-      const aStarted = a.lastStartedAt || 0;
-      const bStarted = b.lastStartedAt || 0;
-      if (aStarted !== bStarted) return bStarted - aStarted;
-      return (b.updatedAt || 0) - (a.updatedAt || 0);
-    })[0] || null;
+  const candidates = Object.values(mediaBySource).filter((media) => {
+    if (!state.enabled || !isSourceEnabled(media.source) || media.ended || media.paused || isSuppressed(media)) {
+      return false;
+    }
+    const age = now - (media.updatedAt || 0);
+    if (age > ACTIVE_TIMEOUT_MS) return false;
+    return true;
+  });
+
+  if (candidates.length === 0) return null;
+
+  return candidates.sort((a, b) => {
+    const aStarted = a.lastStartedAt || a.updatedAt || 0;
+    const bStarted = b.lastStartedAt || b.updatedAt || 0;
+    if (aStarted !== bStarted) return bStarted - aStarted;
+    return (b.updatedAt || 0) - (a.updatedAt || 0);
+  })[0];
 }
 
 function mediaIdentity(media) {
@@ -456,13 +456,20 @@ function enqueuePresenceUpdate(video, force = false) {
   return presenceWrite;
 }
 
+function enqueueClearPresence() {
+  presenceWrite = presenceWrite
+    .catch(() => {})
+    .then(() => performClearPresence());
+  return presenceWrite;
+}
+
 async function syncActivePresence(force = false) {
   const active = chooseActiveMedia();
   state = { ...state, lastVideo: active };
   saveState();
 
   if (!active) {
-    await clearPresence();
+    await enqueueClearPresence();
     return;
   }
 
@@ -496,7 +503,7 @@ async function updatePresence(video, force = false) {
   }
 
   if (generation !== presenceGeneration || !state.enabled || isSuppressed(video)) {
-    await clearPresence({ waitForWrites: false }).catch(() => {});
+    await performClearPresence().catch(() => {});
     return;
   }
 
@@ -507,10 +514,46 @@ async function updatePresence(video, force = false) {
   saveState();
 }
 
-async function clearPresence({ waitForWrites = true } = {}) {
+async function deleteHeadlessSessionToken(token) {
+  if (!token || !tokens?.accessToken) return;
+
+  // Method 1: POST /users/@me/headless-sessions with empty activities and the token
+  try {
+    await requestDiscord("/users/@me/headless-sessions", {
+      method: "POST",
+      body: JSON.stringify({ token, activities: [] })
+    });
+  } catch (_) {}
+
+  // Method 2: POST /users/@me/headless-sessions/delete with token
+  try {
+    await requestDiscord("/users/@me/headless-sessions/delete", {
+      method: "POST",
+      body: JSON.stringify({ token })
+    });
+  } catch (_) {}
+
+  // Method 3: DELETE /users/@me/headless-sessions with token body
+  try {
+    await requestDiscord("/users/@me/headless-sessions", {
+      method: "DELETE",
+      body: JSON.stringify({ token })
+    });
+  } catch (_) {}
+
+  // Method 4: DELETE /users/@me/headless-sessions?token=...
+  try {
+    await requestDiscord(`/users/@me/headless-sessions?token=${encodeURIComponent(token)}`, {
+      method: "DELETE"
+    });
+  } catch (_) {}
+}
+
+async function performClearPresence() {
   bumpPresenceGeneration();
   lastPresenceKey = "";
   lastPresenceSentAt = 0;
+
   if (!tokens?.accessToken) {
     headlessToken = "";
     headlessTokens = [];
@@ -518,37 +561,35 @@ async function clearPresence({ waitForWrites = true } = {}) {
     return;
   }
 
-  if (waitForWrites) {
-    await presenceWrite.catch(() => {});
+  const tokensToDelete = Array.from(new Set([headlessToken, ...headlessTokens].filter(Boolean)));
+
+  if (tokensToDelete.length > 0) {
+    await Promise.allSettled(tokensToDelete.map((t) => deleteHeadlessSessionToken(t)));
+  } else {
+    await requestDiscord("/users/@me/headless-sessions", {
+      method: "POST",
+      body: JSON.stringify({ activities: [] })
+    }).catch(() => {});
   }
 
-  const tokensToDelete = Array.from(new Set([headlessToken, ...headlessTokens].filter(Boolean)));
   headlessToken = "";
   headlessTokens = [];
   saveSession();
+}
 
-  if (tokensToDelete.length) {
-    await Promise.allSettled(
-      tokensToDelete.map((token) =>
-        requestDiscord("/users/@me/headless-sessions/delete", {
-          method: "POST",
-          body: JSON.stringify({ token })
-        })
-      )
-    );
+async function clearPresence({ waitForWrites = true } = {}) {
+  if (waitForWrites) {
+    await enqueueClearPresence();
+  } else {
+    await performClearPresence();
   }
-
-  await requestDiscord("/users/@me/headless-sessions", {
-    method: "POST",
-    body: JSON.stringify({ activities: [] })
-  }).catch(() => {});
 }
 
 async function clearActivePresence() {
   suppressCurrentMedia();
   state = { ...state, lastVideo: null, lastError: "" };
   saveState();
-  await clearPresence();
+  await enqueueClearPresence();
 }
 
 async function logoutDiscord() {
@@ -557,7 +598,7 @@ async function logoutDiscord() {
   headlessToken = "";
   headlessTokens = [];
   lastPresenceKey = "";
-  browserApi.storage.local.remove("discordTokens");
+  browserApi.storage.local.remove(["discordTokens", "rpcSession"]);
   state = { ...DEFAULT_STATE, enabled: state.enabled };
   saveState();
 }
@@ -598,7 +639,10 @@ function isGenericTitleString(str) {
 
 function handleVideoUpdate(video, senderTabId) {
   const source = normalizeSource(video.source || video.platform || "youtube");
-  const previous = mediaBySource[source];
+  const tabId = senderTabId !== undefined ? senderTabId : video.tabId;
+  const storageKey = tabId !== undefined ? `${tabId}:${source}` : source;
+
+  const previous = mediaBySource[storageKey];
   const pageTitle = state.lastMediaPage?.title;
 
   let resolvedTitle = video.title;
@@ -606,24 +650,27 @@ function handleVideoUpdate(video, senderTabId) {
     resolvedTitle = pageTitle;
   }
 
-  const tabId = senderTabId !== undefined ? senderTabId : (video.tabId !== undefined ? video.tabId : previous?.tabId);
-
   const isSameMedia = previous && (
     (video.videoId && previous.videoId === video.videoId) ||
     (video.mediaId && previous.mediaId === video.mediaId) ||
     (video.url && previous.url === video.url)
   );
-  const baseMedia = isSameMedia ? previous : {};
 
-  const becamePlaying = previous ? previous.paused && !video.paused : !video.paused;
+  const mediaChanged = !isSameMedia;
+  const becamePlaying = mediaChanged ? !video.paused : (previous?.paused && !video.paused);
+  const lastStartedAt = (becamePlaying || mediaChanged || !previous?.lastStartedAt)
+    ? Date.now()
+    : previous.lastStartedAt;
+
   const media = applyMediaOverrides({
-    ...baseMedia,
     ...video,
     tabId,
     title: resolvedTitle,
     source,
-    lastStartedAt: video.lastStartedAt || (becamePlaying ? Date.now() : baseMedia?.lastStartedAt || video.updatedAt || Date.now())
+    lastStartedAt,
+    updatedAt: Date.now()
   });
+
   const suppressed = suppressedBySource[source];
   if (
     !media.paused &&
@@ -636,12 +683,22 @@ function handleVideoUpdate(video, senderTabId) {
     suppressedBySource = nextSuppressed;
     saveSession();
   }
-  mediaBySource = { ...mediaBySource, [source]: media };
+
+  if (media.paused || media.ended) {
+    delete mediaBySource[storageKey];
+  } else {
+    mediaBySource[storageKey] = media;
+  }
+
   const active = chooseActiveMedia();
   state = { ...state, lastVideo: active };
   saveState();
 
-  if (!state.enabled || !active || active.source !== source || !isSourceEnabled(source)) return;
+  if (!state.enabled || !active || !isSourceEnabled(active.source)) {
+    syncActivePresence(true).catch(() => {});
+    return;
+  }
+
   enqueuePresenceUpdate(active).catch((error) => {
     state = { ...state, connected: false, lastError: error.message };
     saveState();
@@ -944,16 +1001,16 @@ if (browserApi.runtime && browserApi.runtime.onSuspend) {
   });
 }
 
-// Background heartbeat to purge stale media, verify tabs, and maintain Discord presence consistency
+// Background heartbeat to purge stale or paused media, verify tabs, and maintain Discord presence consistency
 setInterval(() => {
   const now = Date.now();
-  const STALE_THRESHOLD_MS = 12000;
+  const STALE_THRESHOLD_MS = 8000;
   let changed = false;
   const nextMedia = { ...mediaBySource };
 
   for (const [src, media] of Object.entries(nextMedia)) {
     const age = now - (media.updatedAt || 0);
-    if (age > STALE_THRESHOLD_MS) {
+    if (age > STALE_THRESHOLD_MS || media.paused) {
       delete nextMedia[src];
       changed = true;
       continue;
@@ -978,6 +1035,6 @@ setInterval(() => {
   }
 
   syncActivePresence(false).catch(() => {});
-}, 5000);
+}, 3000);
 
 
